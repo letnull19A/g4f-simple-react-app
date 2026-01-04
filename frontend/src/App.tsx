@@ -2,18 +2,23 @@ import { useState, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Send, Bot, User, Loader2 } from "lucide-react";
+import { Send, Bot, User, Loader2, MessageSquare, Image as ImageIcon } from "lucide-react";
+
+type MessageMode = "text" | "image";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  imageUrl?: string;
+  mode?: MessageMode;
 }
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState<MessageMode>("text");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -29,7 +34,7 @@ function App() {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    const userMessage: Message = { role: "user", content: input };
+    const userMessage: Message = { role: "user", content: input, mode };
     const currentInput = input;
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
@@ -38,97 +43,129 @@ function App() {
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await fetch("http://localhost:5000/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: currentInput }),
-        signal: abortControllerRef.current.signal,
-      });
+      if (mode === "image") {
+        // Image generation mode
+        const response = await fetch("http://localhost:5000/api/image", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ prompt: currentInput }),
+          signal: abortControllerRef.current.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error("Failed to get response");
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error("No reader available");
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "", isStreaming: true },
-      ]);
-
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            const lastMessage = newMessages[newMessages.length - 1];
-            if (lastMessage.role === "assistant") {
-              lastMessage.isStreaming = false;
-            }
-            return [...newMessages];
-          });
-
-          break;
+        if (!response.ok) {
+          throw new Error("Failed to generate image");
         }
 
-        const chunk = decoder.decode(value, { stream: true });
+        const data = await response.json();
 
-        buffer += chunk;
+        if (data.error) {
+          throw new Error(data.error);
+        }
 
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: currentInput,
+            imageUrl: data.image_url,
+            mode: "image",
+          },
+        ]);
+      } else {
+        // Text chat mode
+        const response = await fetch("http://localhost:5000/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message: currentInput }),
+          signal: abortControllerRef.current.signal,
+        });
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
+        if (!response.ok) {
+          throw new Error("Failed to get response");
+        }
 
-          const data = line.slice(6).trim();
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
 
-          try {
-            const parsed = JSON.parse(data);
+        if (!reader) {
+          throw new Error("No reader available");
+        }
 
-            if (parsed.content) {
-              console.log("[DEBUG] Received chunk:", parsed.content);
-              setMessages((prev) => {
-                const newMessages = [...prev];
-                const lastMessage = newMessages[newMessages.length - 1];
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "", isStreaming: true, mode: "text" },
+        ]);
 
-                if (lastMessage.role === "assistant") {
-                  lastMessage.content += parsed.content;
-                }
-                return [...newMessages];
-              });
-            }
-            
-            if (parsed.error) {
-              throw new Error(parsed.error);
-            }
-          } catch (e) {
-            if (data && data !== "[DONE]") {
-              console.error("Error parsing chunk:", e, "Data:", data);
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMessage = newMessages[newMessages.length - 1];
+              if (lastMessage.role === "assistant") {
+                lastMessage.isStreaming = false;
+              }
+              return [...newMessages];
+            });
+
+            break;
+          }
+
+          const chunk = decoder.decode(value, { stream: true });
+
+          buffer += chunk;
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+
+            const data = line.slice(6).trim();
+
+            try {
+              const parsed = JSON.parse(data);
+
+              if (parsed.content) {
+                console.log("[DEBUG] Received chunk:", parsed.content);
+                setMessages((prev) => {
+                  const newMessages = [...prev];
+                  const lastMessage = newMessages[newMessages.length - 1];
+
+                  if (lastMessage.role === "assistant") {
+                    lastMessage.content += parsed.content;
+                  }
+                  return [...newMessages];
+                });
+              }
+
+              if (parsed.error) {
+                throw new Error(parsed.error);
+              }
+            } catch (e) {
+              if (data && data !== "[DONE]") {
+                console.error("Error parsing chunk:", e, "Data:", data);
+              }
             }
           }
         }
-      }
 
-      setMessages((prev) => {
-        const newMessages = [...prev];
-        const lastMessage = newMessages[newMessages.length - 1];
-        if (lastMessage.role === "assistant") {
-          lastMessage.isStreaming = false;
-        }
-        return [...newMessages];
-      });
+        setMessages((prev) => {
+          const newMessages = [...prev];
+          const lastMessage = newMessages[newMessages.length - 1];
+          if (lastMessage.role === "assistant") {
+            lastMessage.isStreaming = false;
+          }
+          return [...newMessages];
+        });
+      }
     } catch (error: any) {
       if (error.name === "AbortError") {
         console.log("Request aborted");
@@ -155,10 +192,32 @@ function App() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-4xl h-[700px] flex flex-col shadow-lg">
         <CardHeader className="border-b">
-          <CardTitle className="flex items-center gap-2">
-            <Bot className="h-6 w-6 text-primary" />
-            G4F Chat - GPT-4O
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Bot className="h-6 w-6 text-primary" />
+              G4F Chat - {mode === "text" ? "GPT-4O" : "FLUX Image"}
+            </CardTitle>
+            <div className="flex items-center gap-2 bg-muted rounded-lg p-1">
+              <Button
+                variant={mode === "text" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setMode("text")}
+                className="flex items-center gap-2"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Text
+              </Button>
+              <Button
+                variant={mode === "image" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setMode("image")}
+                className="flex items-center gap-2"
+              >
+                <ImageIcon className="h-4 w-4" />
+                Image
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col gap-4 overflow-hidden p-0">
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
@@ -169,7 +228,9 @@ function App() {
                   Start a conversation
                 </h3>
                 <p className="text-sm">
-                  Ask me anything! I'll respond in real-time.
+                  {mode === "text"
+                    ? "Ask me anything! I'll respond in real-time."
+                    : "Describe an image you want to generate!"}
                 </p>
               </div>
             )}
@@ -210,17 +271,33 @@ function App() {
                         : "bg-muted rounded-tl-sm"
                     }`}
                   >
-                    {message.content ? (
+                    {message.imageUrl ? (
+                      <div className="space-y-2">
+                        <p className="text-sm text-muted-foreground italic">
+                          {message.content}
+                        </p>
+                        <img
+                          src={message.imageUrl}
+                          alt={message.content}
+                          className="rounded-lg max-w-md w-full h-auto"
+                          loading="lazy"
+                        />
+                      </div>
+                    ) : message.content ? (
                       <p className="text-sm whitespace-pre-wrap leading-relaxed">
                         {message.content}
                       </p>
                     ) : message.isStreaming ? (
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span className="text-sm">Thinking...</span>
+                        <span className="text-sm">
+                          {message.mode === "image"
+                            ? "Generating image..."
+                            : "Thinking..."}
+                        </span>
                       </div>
                     ) : null}
-                    {message.isStreaming && message.content && (
+                    {message.isStreaming && message.content && !message.imageUrl && (
                       <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
                     )}
                   </div>
@@ -235,7 +312,11 @@ function App() {
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Type your message..."
+                placeholder={
+                  mode === "text"
+                    ? "Type your message..."
+                    : "Describe the image you want to generate..."
+                }
                 disabled={isLoading}
                 className="flex-1"
                 autoFocus
