@@ -11,15 +11,45 @@ import os
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
 CORS(app)
 
+# Optional proxy configuration from environment variables
+# Supports HTTP, HTTPS, and SOCKS5 proxies
+PROXY_HTTP = os.getenv('PROXY_HTTP', '')
+PROXY_HTTPS = os.getenv('PROXY_HTTPS', '')
+
+# Build proxies dict for requests library
+# Supports formats: http://, https://, socks5://
+PROXIES = {}
+if PROXY_HTTP:
+    PROXIES['http'] = PROXY_HTTP
+if PROXY_HTTPS:
+    PROXIES['https'] = PROXY_HTTPS
+
+# Build proxy for g4f
+G4F_PROXY = PROXY_HTTP or PROXY_HTTPS or None
+
+print(f"[CONFIG] Proxy configuration:")
+print(f"  - HTTP Proxy: {PROXY_HTTP or 'Not set'}")
+print(f"  - HTTPS Proxy: {PROXY_HTTPS or 'Not set'}")
+if PROXY_HTTP and 'socks5' in PROXY_HTTP.lower():
+    print(f"  - SOCKS5 detected for HTTP traffic")
+if PROXY_HTTPS and 'socks5' in PROXY_HTTPS.lower():
+    print(f"  - SOCKS5 detected for HTTPS traffic")
+
 def generate_stream(message: str):
     """Generator function for streaming responses from g4f"""
     try:
-        
-        response = g4f.ChatCompletion.create(
-            model=g4f.models.gpt_oss_120b,
-            messages=[{"role": "user", "content": message}],
-            stream=True,
-        )
+        # Use g4f.ChatCompletion with optional proxy
+        kwargs = {
+            "model": g4f.models.gpt_oss_120b,
+            "messages": [{"role": "user", "content": message}],
+            "stream": True,
+        }
+
+        # Add proxy if configured
+        if G4F_PROXY:
+            kwargs["proxy"] = G4F_PROXY
+
+        response = g4f.ChatCompletion.create(**kwargs)
 
         chunk_count = 0
         text_chunks = 0
@@ -85,7 +115,8 @@ def generate_image():
 
         print(f"[DEBUG] Sending request to DeepInfra with prompt: {prompt}")
 
-        response = requests.post(api_url, json=payload, headers=headers)
+        # Use proxies if configured
+        response = requests.post(api_url, json=payload, headers=headers, proxies=PROXIES if PROXIES else None)
         response.raise_for_status()
 
         result = response.json()
