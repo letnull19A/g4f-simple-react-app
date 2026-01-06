@@ -23,18 +23,15 @@ def generate_stream(message: str):
         chunk_count = 0
         text_chunks = 0
         for chunk in response:
-            # Debug all chunks
-            print(f"[DEBUG] Chunk {chunk_count}: Type={type(chunk).__name__}, Value={repr(chunk)}")
             chunk_count += 1
 
             # Skip non-string chunks (like ProviderInfo, RequestLogin objects)
             if chunk and isinstance(chunk, str) and chunk.strip():
                 text_chunks += 1
-                print(f"[DEBUG] Text chunk {text_chunks}: {repr(chunk)}")
                 data = json.dumps({"content": chunk})
                 yield f"data: {data}\n\n"
 
-        print(f"[DEBUG] Stream complete. Total chunks: {chunk_count}, Text chunks: {text_chunks}")
+        print(f"Stream complete. Total chunks: {chunk_count}, Text chunks: {text_chunks}")
         yield "data: [DONE]\n\n"
     except Exception as e:
         print(f"[ERROR] {str(e)}")
