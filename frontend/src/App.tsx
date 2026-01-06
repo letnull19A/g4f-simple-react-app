@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Send, Bot, User, Loader2, MessageSquare, Image as ImageIcon } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || '';
+
 type MessageMode = "text" | "image";
 
 interface Message {
@@ -45,7 +47,7 @@ function App() {
     try {
       if (mode === "image") {
         // Image generation mode
-        const response = await fetch("http://localhost:5000/api/image", {
+        const response = await fetch(`${API_URL}/api/image`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -75,7 +77,7 @@ function App() {
         ]);
       } else {
         // Text chat mode
-        const response = await fetch("http://localhost:5000/api/chat", {
+        const response = await fetch(`${API_URL}/api/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
